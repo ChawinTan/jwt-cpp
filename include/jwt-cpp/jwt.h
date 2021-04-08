@@ -2745,71 +2745,72 @@ namespace jwt {
 		 * \param jwt Token to check
 		 * \throw token_verification_exception Verification failed
 		 */
-		void verify(const decoded_jwt<json_traits>& jwt) const {
+		bool verify(const decoded_jwt<json_traits>& jwt) const {
 			std::error_code ec;
-			verify(jwt, ec);
 			error::throw_if_error(ec);
+			return verify(jwt, ec);
 		}
 		/**
 		 * Verify the given token.
 		 * \param jwt Token to check
 		 * \param ec error_code filled with details on error
 		 */
-		void verify(const decoded_jwt<json_traits>& jwt, std::error_code& ec) const {
+		bool verify(const decoded_jwt<json_traits>& jwt, std::error_code& ec) const {
 			ec.clear();
 			const typename json_traits::string_type data = jwt.get_header_base64() + "." + jwt.get_payload_base64();
 			const typename json_traits::string_type sig = jwt.get_signature();
 			const std::string algo = jwt.get_algorithm();
 			if (algs.count(algo) == 0) {
 				ec = error::token_verification_error::wrong_algorithm;
-				return;
+				return false;
 			}
 			algs.at(algo)->verify(data, sig, ec);
-			if (ec) return;
+			if (ec) return false;
 
 			auto assert_claim_eq = [](const decoded_jwt<json_traits>& jwt, const typename json_traits::string_type& key,
 									  const basic_claim_t& c, std::error_code& ec) {
 				if (!jwt.has_payload_claim(key)) {
 					ec = error::token_verification_error::missing_claim;
-					return;
+					return false;
 				}
 				auto jc = jwt.get_payload_claim(key);
 				if (jc.get_type() != c.get_type()) {
 					ec = error::token_verification_error::claim_type_missmatch;
-					return;
+					return false;
 				}
 				if (c.get_type() == json::type::integer) {
 					if (c.as_date() != jc.as_date()) {
 						ec = error::token_verification_error::claim_value_missmatch;
-						return;
+						return false;
 					}
 				} else if (c.get_type() == json::type::array) {
 					auto s1 = c.as_set();
 					auto s2 = jc.as_set();
 					if (s1.size() != s2.size()) {
 						ec = error::token_verification_error::claim_value_missmatch;
-						return;
+						return false;
 					}
 					auto it1 = s1.cbegin();
 					auto it2 = s2.cbegin();
 					while (it1 != s1.cend() && it2 != s2.cend()) {
 						if (*it1++ != *it2++) {
 							ec = error::token_verification_error::claim_value_missmatch;
-							return;
+							return false;
 						}
 					}
 				} else if (c.get_type() == json::type::object) {
 					if (json_traits::serialize(c.to_json()) != json_traits::serialize(jc.to_json())) {
 						ec = error::token_verification_error::claim_value_missmatch;
-						return;
+						return false;
 					}
 				} else if (c.get_type() == json::type::string) {
 					if (c.as_string() != jc.as_string()) {
 						ec = error::token_verification_error::claim_value_missmatch;
-						return;
+						return false;
 					}
 				} else
 					throw std::logic_error("internal error, should be unreachable");
+					return false;
 			};
 
 			auto time = clock.now();
@@ -2821,7 +2822,7 @@ namespace jwt {
 				auto exp = jwt.get_expires_at();
 				if (time > exp + std::chrono::seconds(leeway)) {
 					ec = error::token_verification_error::token_expired;
-					return;
+					return false;
 				}
 			}
 			if (jwt.has_issued_at()) {
@@ -2831,7 +2832,7 @@ namespace jwt {
 				auto iat = jwt.get_issued_at();
 				if (time < iat - std::chrono::seconds(leeway)) {
 					ec = error::token_verification_error::token_expired;
-					return;
+					return false;
 				}
 			}
 			if (jwt.has_not_before()) {
@@ -2841,7 +2842,7 @@ namespace jwt {
 				auto nbf = jwt.get_not_before();
 				if (time < nbf - std::chrono::seconds(leeway)) {
 					ec = error::token_verification_error::token_expired;
-					return;
+					return false;
 				}
 			}
 			for (auto& c : claims) {
@@ -2850,7 +2851,7 @@ namespace jwt {
 				} else if (c.first == "aud") {
 					if (!jwt.has_audience()) {
 						ec = error::token_verification_error::audience_missmatch;
-						return;
+						return false;
 					}
 					auto aud = jwt.get_audience();
 					typename basic_claim_t::set_t expected = {};
@@ -2861,14 +2862,15 @@ namespace jwt {
 					for (auto& e : expected) {
 						if (aud.count(e) == 0) {
 							ec = error::token_verification_error::audience_missmatch;
-							return;
+							return false;
 						}
 					}
 				} else {
 					assert_claim_eq(jwt, c.first, c.second, ec);
-					if (ec) return;
+					if (ec) return false;
 				}
 			}
+			return true;
 		}
 	};
 
